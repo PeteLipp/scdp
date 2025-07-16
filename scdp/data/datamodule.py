@@ -13,6 +13,9 @@ from torch.utils.data import Dataset, Subset
 
 from scdp.common.pyg import DataLoader
 from scdp.data.dataloader import ProbeDataLoader
+from hydra.utils import instantiate
+
+from mldft.ml.data.components.basis_info import BasisInfo
 
 
 def worker_init_fn(id: int):
@@ -137,10 +140,12 @@ class ProbeDataModule(DataModule):
         num_workers: DictConfig,
         batch_size: DictConfig,
         n_probe: DictConfig,
+        basis_info: BasisInfo,
     ):
         super().__init__(dataset, split_file, num_workers, batch_size)
         self.n_probe = n_probe
-        
+        self.basis_info = instantiate(basis_info)
+
     def train_dataloader(self, shuffle=True):
         if self.n_probe.train > 0:
             return ProbeDataLoader(
@@ -150,6 +155,7 @@ class ProbeDataModule(DataModule):
                 num_workers=self.num_workers.train,
                 n_probe=self.n_probe.train,
                 worker_init_fn=worker_init_fn,
+                basis_info=self.basis_info,
             )
         else:
             return DataLoader(
@@ -158,6 +164,7 @@ class ProbeDataModule(DataModule):
                 batch_size=self.batch_size.train,
                 num_workers=self.num_workers.train,
                 worker_init_fn=worker_init_fn,
+                basis_info=self.basis_info,
             )
 
     def val_dataloader(self):
@@ -169,6 +176,7 @@ class ProbeDataModule(DataModule):
                 num_workers=self.num_workers.val,
                 n_probe=self.n_probe.val,
                 worker_init_fn=worker_init_fn,
+                basis_info=self.basis_info,
             )
         else:
             return DataLoader(
@@ -177,6 +185,7 @@ class ProbeDataModule(DataModule):
                 batch_size=self.batch_size.val,
                 num_workers=self.num_workers.val,
                 worker_init_fn=worker_init_fn,
+                basis_info=self.basis_info,
             )
     
     def test_dataloader(self):
@@ -188,6 +197,7 @@ class ProbeDataModule(DataModule):
                 num_workers=self.num_workers.test,
                 n_probe=self.n_probe.test,
                 worker_init_fn=worker_init_fn,
+                basis_info=self.basis_info,
             )
         else:
             return DataLoader(
@@ -196,6 +206,7 @@ class ProbeDataModule(DataModule):
                 batch_size=self.batch_size.test,
                 num_workers=self.num_workers.test,
                 worker_init_fn=worker_init_fn,
+                basis_info=self.basis_info,
             )
 
     def __repr__(self) -> str:
