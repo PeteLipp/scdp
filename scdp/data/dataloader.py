@@ -4,10 +4,11 @@ from torch.utils.data import DataLoader
 
 from scdp.common.pyg import Collater
 from mldft.utils.molecules import build_molecule_np
-from mldft.ml.data.components.of_data import OFData
+from mldft.ml.data.components.of_data import OFData, Representation
 from mldft.ml.data.components.of_batch import OFBatch
 from mldft.ml.data.components.convert_transforms import ToTorch
 from mldft.ml.data.components.basis_info import BasisInfo
+import numpy as np
 
 
 class ProbeCollater(Collater):
@@ -20,10 +21,10 @@ class ProbeCollater(Collater):
         of_data_list = []
         basis_info = self.basis_info #BasisInfo.from_atomic_numbers_with_even_tempered_basis(basis='def2-qzvppd', atomic_numbers=[1, 6, 7, 8, 9], even_tempered=False, beta=2.5, uncontracted=True)
         for x in batch:
-            mol = build_molecule_np(charges = x.atom_types,
-                        positions = x.coords, basis = basis_info.basis_dict)
+            mol = build_molecule_np(charges = x.atom_types.numpy(),
+                        positions = x.coords.numpy().astype(np.float64), basis = basis_info.basis_dict)
             of_data = ToTorch()(OFData.minimal_sample_from_mol(mol, basis_info))
-            of_data.molecule = mol
+            of_data.add_item("molecule", mol, Representation.NONE)
             of_data_list.append(of_data)
 
         if self.n_probe < x.n_probe:
