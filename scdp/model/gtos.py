@@ -46,6 +46,7 @@ class GTOs(nn.Module):
                  expos: torch.Tensor, 
                  contraction : Optional[torch.Tensor] = None,
                  normalize: bool = True,
+                 reorder: bool = True,
                  cutoff: Optional[float] = None,
                 ):
         super(GTOs, self).__init__()
@@ -68,6 +69,19 @@ class GTOs(nn.Module):
         self.n_orbitals_per_L = scatter(torch.ones_like(self.Ls), self.Ls, MAX_L+1)
         self.outdim_per_L = self.n_orbitals_per_L * (2 * torch.arange(MAX_L+1) + 1)
         self.irreps = o3.Irreps([(int(x), (l, 1)) for l, x in enumerate(self.n_orbitals_per_L) if x > 0])
+
+        # check if contraction is trivial, i.e. if there are no duplicates:
+        if contraction is None:
+            contraction_list = []
+        elif isinstance(contraction, (list, tuple)):
+            contraction_list = list(contraction)
+        elif isinstance(contraction, torch.Tensor):
+            contraction_list = contraction.tolist()
+        else:
+            raise TypeError("contraction must be a list, tuple or torch.Tensor.")
+        if len(set(contraction_list)) == len(contraction_list):
+            # print("Contraction is trivial, no contraction will be applied.")
+            contraction = None
         
         if contraction is not None:
             if not isinstance(contraction, torch.Tensor):
@@ -81,6 +95,7 @@ class GTOs(nn.Module):
             self.contraction = None
             self.outdim = torch.sum(2 * Ls + 1)
             
+        self.reorder = reorder
         self.normalize = normalize
         if normalize:
             self.lognorm: torch.FloatTensor
@@ -92,17 +107,27 @@ class GTOs(nn.Module):
         if expos is None:
             expos = self.expos
         power = (self.Ls + 1.5)
-        numerator = power * torch.log(2 * expos) + math.log(2)
-        denominator = torch.special.gammaln(power)
-        lognorm = (numerator - denominator) / 2
+        lognorm = 0.5 * (torch.log(torch.tensor(2.0)) + power * torch.log(2 * expos) - torch.special.gammaln(power))
         return lognorm
         
     def compute(self, vecs, expo_scaling=None, index_atom=None):
         r = vecs.norm(dim=-1, keepdim=True) + EPSILON
         spherical = o3.spherical_harmonics(
             list(range(self.Lmax+1)), vecs,
-            normalize=True, normalization='norm'
+            normalize=True, normalization='integral'
         ) # N x (Lmax + 1)^2
+        if self.reorder:
+            sh_irreps = ""
+            for l in range(self.Lmax + 1):
+                # for some reason the l=1 spherical harmonics have a different order convention in e3nn compared to pyscf than the others
+                if l < 2:
+                    sh_irreps += f"{2*l+1}x0y+" 
+                else:
+                    sh_irreps += f"1x{l}y+"
+            sh_irreps = o3.Irreps(sh_irreps[:-1])  # to remove the last '+'
+            reorder_matrix = torch.tensor([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device=vecs.device, dtype=vecs.dtype)
+            sh_wigner = sh_irreps.D_from_matrix(reorder_matrix)
+            spherical = spherical @ sh_wigner  # this actually applied the inverse of the reorder matrix
                 
         if expo_scaling is None:
             exponent = -self.expos * (r * r)
@@ -128,7 +153,7 @@ class GTOs(nn.Module):
             return uncontracted
         
     def forward(self, probe_coords, atom_coords, n_probes, n_atoms,
-                coeffs=None, expo_scaling=None, reorder=True, pbc=False, cell=None):
+                coeffs=None, expo_scaling=None, pbc=False, cell=None):
         """
         batched forward pass.
         probe_coords:  (n_total_probes, 3)
@@ -195,9 +220,9 @@ class GTOs(nn.Module):
             index_atom = index_atom[mask]
             vecs = vecs[mask]
                 
-        if reorder:
-            vecs = vecs[..., [1,2,0]] # z, x, y (e3nn) -> x, y, z
-        vecs = vecs / bohr2ang # basis set length unit is a.u.
+        # if reorder:
+            # vecs = vecs[..., [1,2,0]] # z, x, y (e3nn) -> x, y, z
+        # vecs = vecs / bohr2ang # basis set length unit is a.u.
 
         if coeffs is not None:
             # n_total_probes x 1
