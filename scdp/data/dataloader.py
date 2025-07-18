@@ -1,4 +1,6 @@
 
+import torch
+import numpy as np
 from typing import Optional, List
 from torch.utils.data import DataLoader
 
@@ -6,33 +8,52 @@ from scdp.common.pyg import Collater
 from mldft.utils.molecules import build_molecule_np
 from mldft.ml.data.components.of_data import OFData, Representation
 from mldft.ml.data.components.of_batch import OFBatch
-from mldft.ml.data.components.convert_transforms import ToTorch
+from mldft.ml.data.components.convert_transforms import ToTorch, AddFullEdgeIndex, AddRadiusEdgeIndex
+from mldft.ml.data.components.basis_transforms import AddLocalFrames
 from mldft.ml.data.components.basis_info import BasisInfo
-import numpy as np
 
 
 class ProbeCollater(Collater):
-    def __init__(self, follow_batch, exclude_keys, n_probe=200, basis_info: BasisInfo = None):
+    def __init__(self, follow_batch, exclude_keys, n_probe=200, basis_info: BasisInfo = None, add_lframes: bool = False, edge_radial_cutoff: float = None):
         super().__init__(follow_batch, exclude_keys)
         self.n_probe = n_probe
         self.basis_info = basis_info
+        if add_lframes:
+            self.add_lframes_module = AddLocalFrames()
+        else:
+            self.add_lframes_module = None
+        if edge_radial_cutoff is None:
+            self.add_edge_index_module = AddFullEdgeIndex()
+        else:
+            self.add_edge_index_module = AddRadiusEdgeIndex(radius=self.edge_radial_cutoff)
 
     def __call__(self, batch):
         of_data_list = []
-        basis_info = self.basis_info #BasisInfo.from_atomic_numbers_with_even_tempered_basis(basis='def2-qzvppd', atomic_numbers=[1, 6, 7, 8, 9], even_tempered=False, beta=2.5, uncontracted=True)
         for x in batch:
             mol = build_molecule_np(charges = x.atom_types.numpy(),
-                        positions = x.coords.numpy().astype(np.float64), basis = basis_info.basis_dict)
-            of_data = ToTorch()(OFData.minimal_sample_from_mol(mol, basis_info))
-            of_data.add_item("molecule", mol, Representation.NONE)
+                        positions = x.coords.numpy().astype(np.float64), basis = self.basis_info.basis_dict)
+            of_data = ToTorch()(OFData.minimal_sample_from_mol(mol, self.basis_info))
+            of_data = self.add_edge_index_module(of_data)
+
+            if self.add_lframes_module is not None:
+                of_data = self.add_lframes_module(of_data)
+
+            if self.n_probe < x.n_probe:
+                x = x.sample_probe(n_probe=self.n_probe)
+
+            # add relevant attributes from x to of_data and drop the rest:
+            of_data.add_item("n_probe", x.n_probe, Representation.NONE)
+            of_data.add_item("grid_size", x.grid_size, Representation.NONE)
+            of_data.add_item("cell", x.cell, Representation.VECTOR)  # TODO: or dual vector?
+            of_data.add_item("probe_coords", x.probe_coords, Representation.VECTOR)
+            of_data.add_item("chg_labels", x.chg_labels, Representation.SCALAR)
+            of_data.add_item("molwise_n_vnode", x.n_vnode, Representation.NONE)
+            of_data.add_item("molwise_n_atom", x.n_atom, Representation.NONE)
+            of_data.add_item("ground_state_coeffs", torch.zeros_like(of_data.coeffs), Representation.VECTOR)
             of_data_list.append(of_data)
 
-        if self.n_probe < x.n_probe:
-            batch = [x.sample_probe(n_probe=min(self.n_probe, x.n_probe)) for x in batch]
-        batch = super().__call__(batch)
-        of_batch = OFBatch.from_data_list(of_data_list, ["coeffs", "atomic_numbers"])
-        batch.of_batch = of_batch
-        return batch
+        of_batch = OFBatch.from_data_list(of_data_list, follow_batch=["coeffs", "atomic_numbers"])
+        return of_batch
 
 
 class ProbeDataLoader(DataLoader):
@@ -73,12 +94,16 @@ class ProbeDataLoader(DataLoader):
         self.exclude_keys = exclude_keys
         self.n_probe = n_probe
         self.basis_info = basis_info
+        add_lframes = kwargs.pop("add_lframes", False)
+        edge_radial_cutoff = kwargs.pop("edge_radial_cutoff", None)
 
         super().__init__(
             dataset,
             batch_size,
             shuffle,
             collate_fn=ProbeCollater(follow_batch, exclude_keys, n_probe,
-                                     basis_info=basis_info),
+                                     basis_info=basis_info,
+                                     add_lframes=add_lframes, 
+                                     edge_radial_cutoff=edge_radial_cutoff),
             **kwargs,
         )

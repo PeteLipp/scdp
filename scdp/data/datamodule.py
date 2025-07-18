@@ -4,16 +4,14 @@ from typing import Optional, Dict
 from pathlib import Path
 from tqdm import tqdm
 
-import hydra
 import numpy as np
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 import torch
 from omegaconf import DictConfig
 from torch.utils.data import Dataset, Subset
 
 from scdp.common.pyg import DataLoader
 from scdp.data.dataloader import ProbeDataLoader
-from hydra.utils import instantiate
 
 from mldft.ml.data.components.basis_info import BasisInfo
 
@@ -59,12 +57,11 @@ class DataModule(pl.LightningDataModule):
         """
         construct datasets and assign data scalers.
         """
-        self.dataset = hydra.utils.instantiate(self.dataset)
         self.train_dataset = Subset(self.dataset, self.splits["train"])
         self.val_dataset = Subset(self.dataset, self.splits["validation"])
         self.test_dataset = Subset(self.dataset, self.splits["test"])
         if (Path(self.dataset.path) / 'metadata.json').exists():
-            with open(self.dataset.path / 'metadata.json', 'r') as fp:
+            with open(Path(self.dataset.path) / 'metadata.json', 'r') as fp:
                 self.metadata = json.load(fp)
         else:
             self.metadata = self.get_metadata()
@@ -141,10 +138,12 @@ class ProbeDataModule(DataModule):
         batch_size: DictConfig,
         n_probe: DictConfig,
         basis_info: BasisInfo,
+        dataloader_kwargs: Optional[Dict] = None
     ):
-        super().__init__(dataset, split_file, num_workers, batch_size)
+        super().__init__(dataset=dataset, split_file=split_file, num_workers=num_workers, batch_size=batch_size)
         self.n_probe = n_probe
-        self.basis_info = instantiate(basis_info)
+        self.basis_info = basis_info
+        self.dataloader_kwargs = dataloader_kwargs if dataloader_kwargs is not None else {}
 
     def train_dataloader(self, shuffle=True):
         if self.n_probe.train > 0:
@@ -156,6 +155,7 @@ class ProbeDataModule(DataModule):
                 n_probe=self.n_probe.train,
                 worker_init_fn=worker_init_fn,
                 basis_info=self.basis_info,
+                **self.dataloader_kwargs
             )
         else:
             return DataLoader(
@@ -164,7 +164,6 @@ class ProbeDataModule(DataModule):
                 batch_size=self.batch_size.train,
                 num_workers=self.num_workers.train,
                 worker_init_fn=worker_init_fn,
-                basis_info=self.basis_info,
             )
 
     def val_dataloader(self):
@@ -177,6 +176,7 @@ class ProbeDataModule(DataModule):
                 n_probe=self.n_probe.val,
                 worker_init_fn=worker_init_fn,
                 basis_info=self.basis_info,
+                **self.dataloader_kwargs
             )
         else:
             return DataLoader(
@@ -185,7 +185,6 @@ class ProbeDataModule(DataModule):
                 batch_size=self.batch_size.val,
                 num_workers=self.num_workers.val,
                 worker_init_fn=worker_init_fn,
-                basis_info=self.basis_info,
             )
     
     def test_dataloader(self):
@@ -198,6 +197,7 @@ class ProbeDataModule(DataModule):
                 n_probe=self.n_probe.test,
                 worker_init_fn=worker_init_fn,
                 basis_info=self.basis_info,
+                **self.dataloader_kwargs
             )
         else:
             return DataLoader(
@@ -206,7 +206,6 @@ class ProbeDataModule(DataModule):
                 batch_size=self.batch_size.test,
                 num_workers=self.num_workers.test,
                 worker_init_fn=worker_init_fn,
-                basis_info=self.basis_info,
             )
 
     def __repr__(self) -> str:
