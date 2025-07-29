@@ -3,10 +3,16 @@ import math
 import torch
 import torch.nn as nn
 from e3nn import o3
+import e3nn.o3._wigner as o3_wigner
 from e3nn.util.jit import compile_mode
 
 from scdp.common.constants import bohr2ang
 from scdp.common.utils import scatter
+
+from mldft.ml.models.components.equiformerv2_components.wigner import wigner_D
+
+# monkey patch the wigner_D function from e3nn to the faster version
+o3_wigner.wigner_D = wigner_D
 
 EPSILON = 1e-8
 MAX_L = 10
@@ -48,6 +54,7 @@ class GTOs(nn.Module):
                  normalize: bool = True,
                  reorder: bool = True,
                  cutoff: Optional[float] = None,
+                 return_unscattered: bool = False,
                 ):
         super(GTOs, self).__init__()
         assert len(Ls) == len(coeffs) == len(expos), "<len(Ls)> must equal <len(coeffs)> and <len(expos)>."
@@ -102,7 +109,21 @@ class GTOs(nn.Module):
             self.register_buffer('lognorm', self._generate_lognorm().view(-1))
 
         self.cutoff = cutoff
-        
+        self.return_unscattered = return_unscattered
+
+        if self.reorder:
+            sh_irreps = ""
+            for l in range(self.Lmax + 1):
+                # for some reason the l=1 spherical harmonics have a different order convention in e3nn compared to pyscf than the others
+                if l < 2:
+                    sh_irreps += f"{2*l+1}x0y+" 
+                else:
+                    sh_irreps += f"1x{l}y+"
+            sh_irreps = o3.Irreps(sh_irreps[:-1])  # to remove the last '+'
+            reorder_matrix = torch.tensor([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+            sh_wigner = sh_irreps.D_from_matrix(reorder_matrix)
+            self.register_buffer('reorder_wigner', sh_wigner)
+
     def _generate_lognorm(self, expos=None):
         if expos is None:
             expos = self.expos
@@ -117,18 +138,8 @@ class GTOs(nn.Module):
             normalize=True, normalization='integral'
         ) # N x (Lmax + 1)^2
         if self.reorder:
-            sh_irreps = ""
-            for l in range(self.Lmax + 1):
-                # for some reason the l=1 spherical harmonics have a different order convention in e3nn compared to pyscf than the others
-                if l < 2:
-                    sh_irreps += f"{2*l+1}x0y+" 
-                else:
-                    sh_irreps += f"1x{l}y+"
-            sh_irreps = o3.Irreps(sh_irreps[:-1])  # to remove the last '+'
-            reorder_matrix = torch.tensor([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device=vecs.device, dtype=vecs.dtype)
-            sh_wigner = sh_irreps.D_from_matrix(reorder_matrix)
-            spherical = spherical @ sh_wigner  # this actually applied the inverse of the reorder matrix
-                
+            spherical = spherical @ self.reorder_wigner  # this actually applied the inverse of the reorder matrix
+
         if expo_scaling is None:
             exponent = -self.expos * (r * r)
             normalization = torch.ones_like(r) * self.lognorm
@@ -223,6 +234,9 @@ class GTOs(nn.Module):
         # if reorder:
             # vecs = vecs[..., [1,2,0]] # z, x, y (e3nn) -> x, y, z
         # vecs = vecs / bohr2ang # basis set length unit is a.u.
+
+        if self.return_unscattered:
+            return self.compute(vecs, expo_scaling, index_atom)  # (n_atom_i * n_grid_points, n_atom_coeffs)
 
         if coeffs is not None:
             # n_total_probes x 1

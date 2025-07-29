@@ -14,7 +14,9 @@ from mldft.ml.data.components.basis_info import BasisInfo
 
 
 class ProbeCollater(Collater):
-    def __init__(self, follow_batch, exclude_keys, n_probe=200, basis_info: BasisInfo = None, add_lframes: bool = False, edge_radial_cutoff: float = None):
+    def __init__(self, follow_batch, exclude_keys, n_probe=200, basis_info: BasisInfo = None, 
+                 add_lframes: bool = False, edge_radial_cutoff: float = None, vnode_dict: dict = None,
+                 remove_vnodes: bool = False):
         super().__init__(follow_batch, exclude_keys)
         self.n_probe = n_probe
         self.basis_info = basis_info
@@ -27,9 +29,26 @@ class ProbeCollater(Collater):
         else:
             self.add_edge_index_module = AddRadiusEdgeIndex(radius=self.edge_radial_cutoff)
 
+        self.vnode_dict = {} if vnode_dict is None else vnode_dict
+        self.remove_vnodes = remove_vnodes
+
+    def remove_vnodes_from_sample(self, x):
+        """Remove vnodes from the sample."""
+        x.atom_types = x.atom_types[~x.is_vnode]
+        x.coords = x.coords[~x.is_vnode]
+        x.n_vnode = 0
+        
+        # at last change the is_vnode attribute:
+        x.is_vnode = x.is_vnode[~x.is_vnode]
+        return x
+
     def __call__(self, batch):
         of_data_list = []
         for x in batch:
+            if self.remove_vnodes:
+                x = self.remove_vnodes_from_sample(x)
+            for vnode_number, atomic_number in self.vnode_dict.items():
+                x.atom_types[x.atom_types == vnode_number] = atomic_number
             mol = build_molecule_np(charges = x.atom_types.numpy(),
                         positions = x.coords.numpy().astype(np.float64), basis = self.basis_info.basis_dict)
             of_data = ToTorch()(OFData.minimal_sample_from_mol(mol, self.basis_info))
@@ -49,6 +68,7 @@ class ProbeCollater(Collater):
             of_data.add_item("chg_labels", x.chg_labels, Representation.SCALAR)
             of_data.add_item("molwise_n_vnode", x.n_vnode, Representation.NONE)
             of_data.add_item("molwise_n_atom", x.n_atom, Representation.NONE)
+            of_data.add_item("is_vnode", x.is_vnode, Representation.SCALAR)
             of_data.add_item("ground_state_coeffs", torch.zeros_like(of_data.coeffs), Representation.VECTOR)
             of_data_list.append(of_data)
 
@@ -84,6 +104,7 @@ class ProbeDataLoader(DataLoader):
         follow_batch: Optional[List[str]] = [None],
         exclude_keys: Optional[List[str]] = [None],
         basis_info: BasisInfo = None,
+        collator_kwargs: Optional[dict] = None,
         **kwargs,
     ):
         if "collate_fn" in kwargs:
@@ -94,8 +115,7 @@ class ProbeDataLoader(DataLoader):
         self.exclude_keys = exclude_keys
         self.n_probe = n_probe
         self.basis_info = basis_info
-        add_lframes = kwargs.pop("add_lframes", False)
-        edge_radial_cutoff = kwargs.pop("edge_radial_cutoff", None)
+        collator_kwargs = {} if collator_kwargs is None else collator_kwargs
 
         super().__init__(
             dataset,
@@ -103,7 +123,6 @@ class ProbeDataLoader(DataLoader):
             shuffle,
             collate_fn=ProbeCollater(follow_batch, exclude_keys, n_probe,
                                      basis_info=basis_info,
-                                     add_lframes=add_lframes, 
-                                     edge_radial_cutoff=edge_radial_cutoff),
+                                     **collator_kwargs),
             **kwargs,
         )

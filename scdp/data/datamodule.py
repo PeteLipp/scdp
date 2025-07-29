@@ -138,12 +138,12 @@ class ProbeDataModule(DataModule):
         batch_size: DictConfig,
         n_probe: DictConfig,
         basis_info: BasisInfo,
-        dataloader_kwargs: Optional[Dict] = None
+        collator_kwargs: Optional[Dict] = None,
     ):
         super().__init__(dataset=dataset, split_file=split_file, num_workers=num_workers, batch_size=batch_size)
         self.n_probe = n_probe
         self.basis_info = basis_info
-        self.dataloader_kwargs = dataloader_kwargs if dataloader_kwargs is not None else {}
+        self.collator_kwargs = collator_kwargs if collator_kwargs is not None else {}
 
     def train_dataloader(self, shuffle=True):
         if self.n_probe.train > 0:
@@ -155,7 +155,7 @@ class ProbeDataModule(DataModule):
                 n_probe=self.n_probe.train,
                 worker_init_fn=worker_init_fn,
                 basis_info=self.basis_info,
-                **self.dataloader_kwargs
+                collator_kwargs=self.collator_kwargs,
             )
         else:
             return DataLoader(
@@ -176,7 +176,7 @@ class ProbeDataModule(DataModule):
                 n_probe=self.n_probe.val,
                 worker_init_fn=worker_init_fn,
                 basis_info=self.basis_info,
-                **self.dataloader_kwargs
+                collator_kwargs=self.collator_kwargs,
             )
         else:
             return DataLoader(
@@ -197,7 +197,7 @@ class ProbeDataModule(DataModule):
                 n_probe=self.n_probe.test,
                 worker_init_fn=worker_init_fn,
                 basis_info=self.basis_info,
-                **self.dataloader_kwargs
+                collator_kwargs=self.collator_kwargs,
             )
         else:
             return DataLoader(
