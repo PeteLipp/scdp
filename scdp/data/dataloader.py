@@ -14,7 +14,7 @@ from mldft.ml.data.components.basis_info import BasisInfo
 
 
 class ProbeCollater(Collater):
-    def __init__(self, follow_batch, exclude_keys, n_probe=200, basis_info: BasisInfo = None, 
+    def __init__(self, follow_batch, exclude_keys, n_probe: int = None, basis_info: BasisInfo = None, 
                  add_lframes: bool = False, edge_radial_cutoff: float = None, vnode_dict: dict = None,
                  remove_vnodes: bool = False):
         super().__init__(follow_batch, exclude_keys)
@@ -57,8 +57,10 @@ class ProbeCollater(Collater):
             if self.add_lframes_module is not None:
                 of_data = self.add_lframes_module(of_data)
 
-            if self.n_probe < x.n_probe:
-                x = x.sample_probe(n_probe=self.n_probe)
+            if self.n_probe is not None:
+                assert isinstance(self.n_probe, int), "n_probe must be an integer"
+                if self.n_probe < x.n_probe:
+                    x = x.sample_probe(n_probe=self.n_probe)
 
             # add relevant attributes from x to of_data and drop the rest:
             of_data.add_item("n_probe", x.n_probe, Representation.NONE)
@@ -100,7 +102,7 @@ class ProbeDataLoader(DataLoader):
         dataset,
         batch_size: int = 1,
         shuffle: bool = False,
-        n_probe: int = 200,
+        n_probe: int = None,
         follow_batch: Optional[List[str]] = [None],
         exclude_keys: Optional[List[str]] = [None],
         basis_info: BasisInfo = None,

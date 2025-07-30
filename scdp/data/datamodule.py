@@ -146,67 +146,40 @@ class ProbeDataModule(DataModule):
         self.collator_kwargs = collator_kwargs if collator_kwargs is not None else {}
 
     def train_dataloader(self, shuffle=True):
-        if self.n_probe.train > 0:
-            return ProbeDataLoader(
-                self.train_dataset,
-                shuffle=shuffle,
-                batch_size=self.batch_size.train,
-                num_workers=self.num_workers.train,
-                n_probe=self.n_probe.train,
-                worker_init_fn=worker_init_fn,
-                basis_info=self.basis_info,
-                collator_kwargs=self.collator_kwargs,
-            )
-        else:
-            return DataLoader(
-                self.train_dataset,
-                shuffle=shuffle,
-                batch_size=self.batch_size.train,
-                num_workers=self.num_workers.train,
-                worker_init_fn=worker_init_fn,
-            )
+        return ProbeDataLoader(
+            self.train_dataset,
+            shuffle=shuffle,
+            batch_size=self.batch_size.train,
+            num_workers=self.num_workers.train,
+            n_probe=self.n_probe.train,
+            worker_init_fn=worker_init_fn,
+            basis_info=self.basis_info,
+            collator_kwargs=self.collator_kwargs,
+        )
 
     def val_dataloader(self):
-        if self.n_probe.val > 0:
-            return ProbeDataLoader(
-                self.val_dataset,
-                shuffle=False,
-                batch_size=self.batch_size.val,
-                num_workers=self.num_workers.val,
-                n_probe=self.n_probe.val,
-                worker_init_fn=worker_init_fn,
-                basis_info=self.basis_info,
-                collator_kwargs=self.collator_kwargs,
-            )
-        else:
-            return DataLoader(
-                self.val_dataset,
-                shuffle=False,
-                batch_size=self.batch_size.val,
-                num_workers=self.num_workers.val,
-                worker_init_fn=worker_init_fn,
-            )
+        return ProbeDataLoader(
+            self.val_dataset,
+            shuffle=False,
+            batch_size=self.batch_size.val,
+            num_workers=self.num_workers.val,
+            n_probe=self.n_probe.val,
+            worker_init_fn=worker_init_fn,
+            basis_info=self.basis_info,
+            collator_kwargs=self.collator_kwargs,
+        )
     
     def test_dataloader(self):
-        if self.n_probe.test > 0:
-            return ProbeDataLoader(
-                self.test_dataset,
-                shuffle=False,
-                batch_size=self.batch_size.test,
-                num_workers=self.num_workers.test,
-                n_probe=self.n_probe.test,
-                worker_init_fn=worker_init_fn,
-                basis_info=self.basis_info,
-                collator_kwargs=self.collator_kwargs,
-            )
-        else:
-            return DataLoader(
-                self.test_dataset,
-                shuffle=False,
-                batch_size=self.batch_size.test,
-                num_workers=self.num_workers.test,
-                worker_init_fn=worker_init_fn,
-            )
+        return ProbeDataLoader(
+            self.test_dataset,
+            shuffle=False,
+            batch_size=self.batch_size.test,
+            num_workers=self.num_workers.test,
+            n_probe=self.n_probe.test,
+            worker_init_fn=worker_init_fn,
+            basis_info=self.basis_info,
+            collator_kwargs=self.collator_kwargs,
+        )
 
     def __repr__(self) -> str:
         return (
