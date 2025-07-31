@@ -8,15 +8,16 @@ from scdp.common.pyg import Collater
 from mldft.utils.molecules import build_molecule_np
 from mldft.ml.data.components.of_data import OFData, Representation
 from mldft.ml.data.components.of_batch import OFBatch
-from mldft.ml.data.components.convert_transforms import ToTorch, AddFullEdgeIndex, AddRadiusEdgeIndex
+from mldft.ml.data.components.convert_transforms import ToTorch, AddFullEdgeIndex, AddRadiusEdgeIndex, AddLocalFramesSAD
 from mldft.ml.data.components.basis_transforms import AddLocalFrames
 from mldft.ml.data.components.basis_info import BasisInfo
+from mldft.ml.preprocess.dataset_statistics import DatasetStatistics
 
 
 class ProbeCollater(Collater):
     def __init__(self, follow_batch, exclude_keys, n_probe: int = None, basis_info: BasisInfo = None, 
                  add_lframes: bool = False, edge_radial_cutoff: float = None, vnode_dict: dict = None,
-                 remove_vnodes: bool = False):
+                 remove_vnodes: bool = False, lframes_sad_statistics: DatasetStatistics = None):
         super().__init__(follow_batch, exclude_keys)
         self.n_probe = n_probe
         self.basis_info = basis_info
@@ -31,6 +32,13 @@ class ProbeCollater(Collater):
 
         self.vnode_dict = {} if vnode_dict is None else vnode_dict
         self.remove_vnodes = remove_vnodes
+        if lframes_sad_statistics is not None:
+            self.lframes_sad_module = AddLocalFramesSAD(
+                dataset_statistics=lframes_sad_statistics,
+                basis_info=self.basis_info,
+            )
+        else:
+            self.lframes_sad_module = None
 
     def remove_vnodes_from_sample(self, x):
         """Remove vnodes from the sample."""
@@ -53,14 +61,22 @@ class ProbeCollater(Collater):
                         positions = x.coords.numpy().astype(np.float64), basis = self.basis_info.basis_dict)
             of_data = ToTorch()(OFData.minimal_sample_from_mol(mol, self.basis_info))
             of_data = self.add_edge_index_module(of_data)
+            
+            # add random noise to virtual nodes to break collinearity
+            # TODO: replace this with a more sophisticated method
+            of_data.pos[x.is_vnode] += torch.randn_like(of_data.pos[x.is_vnode]) * 1e-4
 
             if self.add_lframes_module is not None:
                 of_data = self.add_lframes_module(of_data)
+
+            if self.lframes_sad_module is not None:
+                of_data = self.lframes_sad_module(of_data)
 
             if self.n_probe is not None:
                 assert isinstance(self.n_probe, int), "n_probe must be an integer"
                 if self.n_probe < x.n_probe:
                     x = x.sample_probe(n_probe=self.n_probe)
+
 
             # add relevant attributes from x to of_data and drop the rest:
             of_data.add_item("n_probe", x.n_probe, Representation.NONE)
