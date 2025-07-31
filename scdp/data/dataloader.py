@@ -64,7 +64,7 @@ class ProbeCollater(Collater):
             
             # add random noise to virtual nodes to break collinearity
             # TODO: replace this with a more sophisticated method
-            of_data.pos[x.is_vnode] += torch.randn_like(of_data.pos[x.is_vnode]) * 1e-4
+            of_data.pos[x.is_vnode] += torch.randn_like(of_data.pos[x.is_vnode]) * 1e-3
 
             if self.add_lframes_module is not None:
                 of_data = self.add_lframes_module(of_data)
@@ -76,7 +76,6 @@ class ProbeCollater(Collater):
                 assert isinstance(self.n_probe, int), "n_probe must be an integer"
                 if self.n_probe < x.n_probe:
                     x = x.sample_probe(n_probe=self.n_probe)
-
 
             # add relevant attributes from x to of_data and drop the rest:
             of_data.add_item("n_probe", x.n_probe, Representation.NONE)
