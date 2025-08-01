@@ -36,6 +36,7 @@ class ProbeCollater(Collater):
             self.lframes_sad_module = AddLocalFramesSAD(
                 dataset_statistics=lframes_sad_statistics,
                 basis_info=self.basis_info,
+                statistics_key="lframes_coeffs",
             )
         else:
             self.lframes_sad_module = None
