@@ -63,10 +63,6 @@ class ProbeCollater(Collater):
             of_data = ToTorch()(OFData.minimal_sample_from_mol(mol, self.basis_info))
             of_data = self.add_edge_index_module(of_data)
             
-            # add random noise to virtual nodes to break collinearity
-            # TODO: replace this with a more sophisticated method
-            of_data.pos[x.is_vnode] += torch.randn_like(of_data.pos[x.is_vnode]) * 1e-3
-
             if self.add_lframes_module is not None:
                 of_data = self.add_lframes_module(of_data)
 
