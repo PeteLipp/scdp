@@ -62,12 +62,6 @@ class ProbeCollater(Collater):
                         positions = x.coords.numpy().astype(np.float64), basis = self.basis_info.basis_dict)
             of_data = ToTorch()(OFData.minimal_sample_from_mol(mol, self.basis_info))
             of_data = self.add_edge_index_module(of_data)
-            
-            if self.add_lframes_module is not None:
-                of_data = self.add_lframes_module(of_data)
-
-            if self.lframes_sad_module is not None:
-                of_data = self.lframes_sad_module(of_data)
 
             if self.n_probe is not None:
                 assert isinstance(self.n_probe, int), "n_probe must be an integer"
@@ -84,6 +78,14 @@ class ProbeCollater(Collater):
             of_data.add_item("molwise_n_atom", x.n_atom, Representation.NONE)
             of_data.add_item("is_vnode", x.is_vnode, Representation.SCALAR)
             of_data.add_item("ground_state_coeffs", torch.zeros_like(of_data.coeffs), Representation.VECTOR)
+
+            # local frames related things after is_vnode has been added:
+            if self.add_lframes_module is not None:
+                of_data = self.add_lframes_module(of_data)
+
+            if self.lframes_sad_module is not None:
+                of_data = self.lframes_sad_module(of_data)
+
             of_data_list.append(of_data)
 
         of_batch = OFBatch.from_data_list(of_data_list, follow_batch=["coeffs", "atomic_numbers"])
