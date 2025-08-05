@@ -9,11 +9,13 @@ import lightning.pytorch as pl
 import torch
 from omegaconf import DictConfig
 from torch.utils.data import Dataset, Subset
+from lightning.pytorch.utilities import CombinedLoader
 
 from scdp.common.pyg import DataLoader
 from scdp.data.dataloader import ProbeDataLoader
 
 from mldft.ml.data.components.basis_info import BasisInfo
+from mldft.ml.data.datamodule import RandomSubsetPerEpoch
 
 
 def worker_init_fn(id: int):
@@ -41,6 +43,7 @@ class DataModule(pl.LightningDataModule):
         split_file: Optional[Path],
         num_workers: DictConfig,
         batch_size: DictConfig,
+        move_n_samples_from_train_to_val: int = 0,
     ):
         super().__init__()
         self.dataset = dataset
@@ -52,12 +55,26 @@ class DataModule(pl.LightningDataModule):
         self.val_dataset: Optional[Dataset] = None
         self.test_dataset: Optional[Dataset] = None
         self.metadata: Optional[Dict] = None
+        self.move_n_samples_from_train_to_val = move_n_samples_from_train_to_val
         
     def setup(self, stage: Optional[str] = None):
         """
         construct datasets and assign data scalers.
         """
+        if self.move_n_samples_from_train_to_val > 0:
+            train_split = self.splits["train"]
+            val_split = self.splits["validation"]
+            # move n random samples from train to val:
+            additional_val_samples = random.sample(
+                train_split, self.move_n_samples_from_train_to_val
+            )
+            self.splits["validation"] = val_split + additional_val_samples
+            self.splits["train"] = [
+                i for i in train_split if i not in additional_val_samples
+            ]
+
         self.train_dataset = Subset(self.dataset, self.splits["train"])
+        # self.train_dataset = Subset(self.dataset, self.splits["train"][:50])
         self.val_dataset = Subset(self.dataset, self.splits["validation"])
         self.test_dataset = Subset(self.dataset, self.splits["test"])
         if (Path(self.dataset.path) / 'metadata.json').exists():
@@ -138,12 +155,42 @@ class ProbeDataModule(DataModule):
         batch_size: DictConfig,
         n_probe: DictConfig,
         basis_info: BasisInfo,
+        do_dengen_val: bool = False,
+        n_dengen_mols: int | None = None,
+        move_n_samples_from_train_to_val: int = 0,
         collator_kwargs: Optional[Dict] = None,
     ):
-        super().__init__(dataset=dataset, split_file=split_file, num_workers=num_workers, batch_size=batch_size)
+        super().__init__(dataset=dataset, split_file=split_file, num_workers=num_workers, batch_size=batch_size,
+                            move_n_samples_from_train_to_val=move_n_samples_from_train_to_val)
         self.n_probe = n_probe
         self.basis_info = basis_info
+        self.do_dengen_val = do_dengen_val
+        self.n_dengen_mols = n_dengen_mols
         self.collator_kwargs = collator_kwargs if collator_kwargs is not None else {}
+
+    def setup(self, stage: Optional[str] = None):
+        """
+        construct datasets and assign data scalers.
+        """
+        super().setup(stage)
+        if self.do_dengen_val:
+            # Dengen uses base 'labels' dir
+            if self.n_dengen_mols is not None and len(self.val_dataset) >= self.n_dengen_mols:
+                # dengen_val_subset = val_data[-self.n_dengen_mols :]
+                self.dengen_val_subset = Subset(
+                    self.val_dataset, 
+                    range(len(self.val_dataset) - self.n_dengen_mols, len(self.val_dataset))
+                )
+
+                self.val_sampler = RandomSubsetPerEpoch(
+                    dataset_size=len(self.val_dataset),
+                    subset_size=self.n_dengen_mols,
+                    base_seed=None,  # Use a fixed seed for reproducibility
+                )
+
+            else:
+                self.dengen_val_subset = self.val_dataset
+                self.val_sampler = None
 
     def train_dataloader(self, shuffle=True):
         return ProbeDataLoader(
@@ -158,7 +205,7 @@ class ProbeDataModule(DataModule):
         )
 
     def val_dataloader(self):
-        return ProbeDataLoader(
+        val_loader = ProbeDataLoader(
             self.val_dataset,
             shuffle=False,
             batch_size=self.batch_size.val,
@@ -168,6 +215,41 @@ class ProbeDataModule(DataModule):
             basis_info=self.basis_info,
             collator_kwargs=self.collator_kwargs,
         )
+
+        if self.do_dengen_val:
+            dengen_val_loader = ProbeDataLoader(
+                self.dengen_val_subset,
+                shuffle=False,
+                batch_size=self.batch_size.val,
+                num_workers=self.num_workers.val,
+                n_probe=self.n_probe.val,
+                worker_init_fn=worker_init_fn,
+                basis_info=self.basis_info,
+                collator_kwargs=self.collator_kwargs,
+            )
+            dengen_val_loader_random = ProbeDataLoader(
+                self.val_dataset,
+                sampler=self.val_sampler,
+                shuffle=False,
+                batch_size=self.batch_size.val,
+                num_workers=self.num_workers.val,
+                n_probe=self.n_probe.val,
+                worker_init_fn=worker_init_fn,
+                basis_info=self.basis_info,
+                collator_kwargs=self.collator_kwargs,
+            )
+            combined_loader = CombinedLoader(
+                {
+                    "val": val_loader,
+                    "dengen_val": dengen_val_loader,
+                    "dengen_val_random": dengen_val_loader_random,
+                },
+                mode="sequential",
+            )
+
+            return combined_loader
+        else:
+            return val_loader
     
     def test_dataloader(self):
         return ProbeDataLoader(
