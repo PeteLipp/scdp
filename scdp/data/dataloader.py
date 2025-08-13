@@ -1,6 +1,8 @@
 
 import torch
 import numpy as np
+import os
+import zarr
 from typing import Optional, List
 from torch.utils.data import DataLoader
 
@@ -17,7 +19,7 @@ from mldft.ml.preprocess.dataset_statistics import DatasetStatistics
 class ProbeCollater(Collater):
     def __init__(self, follow_batch, exclude_keys, n_probe: int = None, basis_info: BasisInfo = None, 
                  add_lframes: bool = False, edge_radial_cutoff: float = None, vnode_dict: dict = None,
-                 remove_vnodes: bool = False, lframes_sad_statistics: DatasetStatistics = None):
+                 remove_vnodes: bool = False, lframes_sad_statistics: DatasetStatistics = None, gs_coeffs_fit_path: Optional[str] = None):
         super().__init__(follow_batch, exclude_keys)
         self.n_probe = n_probe
         self.basis_info = basis_info
@@ -40,6 +42,8 @@ class ProbeCollater(Collater):
             )
         else:
             self.lframes_sad_module = None
+
+        self.gs_coeffs_fit_path = gs_coeffs_fit_path
 
     def remove_vnodes_from_sample(self, x):
         """Remove vnodes from the sample."""
@@ -69,6 +73,7 @@ class ProbeCollater(Collater):
                     x = x.sample_probe(n_probe=self.n_probe)
 
             # add relevant attributes from x to of_data and drop the rest:
+            of_data.add_item("id", x.id, Representation.NONE)
             of_data.add_item("n_probe", x.n_probe, Representation.NONE)
             of_data.add_item("grid_size", x.grid_size, Representation.NONE)
             of_data.add_item("cell", x.cell, Representation.VECTOR)  # TODO: or dual vector?
@@ -85,6 +90,14 @@ class ProbeCollater(Collater):
 
             if self.lframes_sad_module is not None:
                 of_data = self.lframes_sad_module(of_data)
+
+            if self.gs_coeffs_fit_path is not None:
+                zarr_path = os.path.join(self.gs_coeffs_fit_path, f"{of_data.id}.zarr")
+                store = zarr.ZipStore(zarr_path, mode="r")  # open in read-only
+                root = zarr.open(store, mode="r")
+
+                gs_coeffs = root["of_labels"]["spatial"]["coeffs"][-1]
+                of_data.ground_state_coeffs = torch.tensor(gs_coeffs, dtype=of_data.coeffs.dtype, device=of_data.coeffs.device)
 
             of_data_list.append(of_data)
 
