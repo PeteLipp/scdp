@@ -10,7 +10,7 @@ from scdp.common.pyg import Collater
 from mldft.utils.molecules import build_molecule_np
 from mldft.ml.data.components.of_data import OFData, Representation
 from mldft.ml.data.components.of_batch import OFBatch
-from mldft.ml.data.components.convert_transforms import ToTorch, AddFullEdgeIndex, AddRadiusEdgeIndex, AddLocalFramesSAD
+from mldft.ml.data.components.convert_transforms import ToTorch, AddFullEdgeIndex, AddRadiusEdgeIndex, AddLocalFramesSAD, AddOverlapMatrix
 from mldft.ml.data.components.basis_transforms import AddLocalFrames
 from mldft.ml.data.components.basis_info import BasisInfo
 from mldft.ml.preprocess.dataset_statistics import DatasetStatistics
@@ -18,7 +18,7 @@ from mldft.ml.preprocess.dataset_statistics import DatasetStatistics
 
 class ProbeCollater(Collater):
     def __init__(self, follow_batch, exclude_keys, n_probe: int = None, basis_info: BasisInfo = None, 
-                 add_lframes: bool = False, edge_radial_cutoff: float = None, vnode_dict: dict = None,
+                 add_lframes: bool = False, add_overlap: bool = False, edge_radial_cutoff: float = None, vnode_dict: dict = None,
                  remove_vnodes: bool = False, lframes_sad_statistics: DatasetStatistics = None, gs_coeffs_fit_path: Optional[str] = None):
         super().__init__(follow_batch, exclude_keys)
         self.n_probe = n_probe
@@ -27,6 +27,11 @@ class ProbeCollater(Collater):
             self.add_lframes_module = AddLocalFrames()
         else:
             self.add_lframes_module = None
+        if add_overlap:
+            self.add_overlap_module = AddOverlapMatrix(basis_info=basis_info)
+        else:
+            self.add_overlap_module = None
+
         if edge_radial_cutoff is None:
             self.add_edge_index_module = AddFullEdgeIndex()
         else:
@@ -64,7 +69,13 @@ class ProbeCollater(Collater):
                 x.atom_types[x.atom_types == vnode_number] = atomic_number
             mol = build_molecule_np(charges = x.atom_types.numpy(),
                         positions = x.coords.numpy().astype(np.float64), basis = self.basis_info.basis_dict)
-            of_data = ToTorch()(OFData.minimal_sample_from_mol(mol, self.basis_info))
+            of_data = OFData.minimal_sample_from_mol(mol, self.basis_info)
+
+            if self.add_overlap_module is not None:
+                # still requires attrs to be numpy arrays:
+                of_data = self.add_overlap_module(of_data)
+
+            of_data = ToTorch()(of_data)
             of_data = self.add_edge_index_module(of_data)
 
             if self.n_probe is not None:
