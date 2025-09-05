@@ -35,7 +35,7 @@ def get_virtual_nodes(
         factor      : (int) The maximum number (as a factor of number of atoms) of iterations for virtual node generation.
         min_radius  : (float) The minimum radius for a virtual node.
         in_dist     : (float) The distance cutoff for the distance_mask.
-        atom_types  : (np.ndarray, N x 1) The atomic numbers. only used for non-pbc <method='bond'>.
+        atom_types  : (np.ndarray, N) The atomic numbers. only used for non-pbc <method='bond'>.
         struct      : (pymatgen.Structure) The crystal structure. only used for pbc <method='bond'>.
     Return:
         (np.ndarray) Cartisan coordinates of the virtual nodes.        

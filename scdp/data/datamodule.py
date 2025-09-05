@@ -8,11 +8,13 @@ import numpy as np
 import lightning.pytorch as pl
 import torch
 from omegaconf import DictConfig
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset, Subset, random_split
 from lightning.pytorch.utilities import CombinedLoader
 
 from scdp.common.pyg import DataLoader
+from mldft.ml.data.components.loader import OFLoader
 from scdp.data.dataloader import ProbeDataLoader
+from scdp.data.md_dataset import SmallDensityDataset
 
 from mldft.ml.data.components.basis_info import BasisInfo
 from mldft.ml.data.datamodule import RandomSubsetPerEpoch
@@ -74,7 +76,6 @@ class DataModule(pl.LightningDataModule):
             ]
 
         self.train_dataset = Subset(self.dataset, self.splits["train"])
-        # self.train_dataset = Subset(self.dataset, self.splits["train"][:50])
         self.val_dataset = Subset(self.dataset, self.splits["validation"])
         self.test_dataset = Subset(self.dataset, self.splits["test"])
         if (Path(self.dataset.path) / 'metadata.json').exists():
@@ -270,4 +271,144 @@ class ProbeDataModule(DataModule):
             f"{self.num_workers=}, "
             f"{self.batch_size=})"
             f"{self.n_probe=})"
+        )
+    
+
+
+class SmallProbeDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        root: str,
+        mol_name: str,
+        num_workers: DictConfig,
+        batch_size: DictConfig,
+        basis_info: BasisInfo,
+        use_n_train_mols_for_val: int = 0,
+        do_dengen_val: bool = False,
+        n_dengen_mols: int | None = None,
+        dataset_kwargs: Optional[Dict] = None,
+    ):
+        super().__init__()
+        self.root = root
+        self.mol_name = mol_name
+        self.num_workers = num_workers
+        self.batch_size = batch_size
+        self.basis_info = basis_info
+        self.dataset_kwargs = dataset_kwargs if dataset_kwargs is not None else {}
+        
+        self.do_dengen_val = do_dengen_val
+        self.n_dengen_mols = n_dengen_mols
+        self.use_n_train_mols_for_val = use_n_train_mols_for_val
+        if self.use_n_train_mols_for_val == 0:
+            print("No validation set available for dengen.")
+            self.do_dengen_val = False
+            self.n_dengen_mols = None
+
+    def setup(self, stage: Optional[str] = None):
+        """
+        construct datasets and assign data scalers.
+        """
+        # initialize datasets
+        self.train_dataset = SmallDensityDataset(
+            root=self.root,
+            mol_name=self.mol_name,
+            split="train",
+            basis_info=self.basis_info,
+            **self.dataset_kwargs)
+        
+        self.test_dataset = SmallDensityDataset(
+            root=self.root,
+            mol_name=self.mol_name,
+            split="test",
+            basis_info=self.basis_info,
+            **self.dataset_kwargs)
+        
+        # create random validation set from train set:
+        self.train_dataset, self.val_dataset = random_split(
+            self.train_dataset, 
+            [len(self.train_dataset) - self.use_n_train_mols_for_val, self.use_n_train_mols_for_val],
+            generator=torch.Generator().manual_seed(42)
+        )
+
+        if self.do_dengen_val and self.use_n_train_mols_for_val > 0:
+            # Dengen uses base 'labels' dir
+            if self.n_dengen_mols is not None and len(self.val_dataset) >= self.n_dengen_mols:
+                # dengen_val_subset = val_data[-self.n_dengen_mols :]
+                self.dengen_val_subset = Subset(
+                    self.val_dataset, 
+                    range(len(self.val_dataset) - self.n_dengen_mols, len(self.val_dataset))
+                )
+
+                self.val_sampler = RandomSubsetPerEpoch(
+                    dataset_size=len(self.val_dataset),
+                    subset_size=self.n_dengen_mols,
+                    base_seed=None,  # Use a fixed seed for reproducibility
+                )
+
+            else:
+                self.dengen_val_subset = self.val_dataset
+                self.val_sampler = None
+
+    def train_dataloader(self, shuffle=True):
+        return OFLoader(
+            self.train_dataset,
+            shuffle=shuffle,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            worker_init_fn=worker_init_fn,
+        )
+
+    def val_dataloader(self):
+        val_loader = OFLoader(
+            self.val_dataset,
+            shuffle=False,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            worker_init_fn=worker_init_fn,
+        )
+
+        if self.do_dengen_val:
+            dengen_val_loader = OFLoader(
+                self.dengen_val_subset,
+                shuffle=False,
+                batch_size=self.batch_size,
+                num_workers=self.num_workers,
+                worker_init_fn=worker_init_fn,
+            )
+            dengen_val_loader_random = OFLoader(
+                self.val_dataset,
+                sampler=self.val_sampler,
+                shuffle=False,
+                batch_size=self.batch_size,
+                num_workers=self.num_workers,
+                worker_init_fn=worker_init_fn,
+            )
+            combined_loader = CombinedLoader(
+                {
+                    "val": val_loader,
+                    "dengen_val": dengen_val_loader,
+                    "dengen_val_random": dengen_val_loader_random,
+                },
+                mode="sequential",
+            )
+
+            return combined_loader
+        else:
+            return val_loader
+    
+    def test_dataloader(self):
+        return OFLoader(
+            self.test_dataset,
+            shuffle=False,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            worker_init_fn=worker_init_fn,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"{self.dataset=}, "
+            f"{self.num_workers=}, "
+            f"{self.batch_size=})"
         )
