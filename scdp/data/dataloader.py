@@ -14,6 +14,7 @@ from mldft.ml.data.components.convert_transforms import ToTorch, AddFullEdgeInde
 from mldft.ml.data.components.basis_transforms import AddLocalFrames
 from mldft.ml.data.components.basis_info import BasisInfo
 from mldft.ml.preprocess.dataset_statistics import DatasetStatistics
+from mldft.ofdft.basis_integrals import get_normalization_vector
 
 
 class ProbeCollater(Collater):
@@ -65,11 +66,27 @@ class ProbeCollater(Collater):
         for x in batch:
             if self.remove_vnodes:
                 x = self.remove_vnodes_from_sample(x)
+            vnode_masks = {}
             for vnode_number, atomic_number in self.vnode_dict.items():
-                x.atom_types[x.atom_types == vnode_number] = atomic_number
+                vnode_mask = (x.atom_types == vnode_number)
+                x.atom_types[vnode_mask] = atomic_number
+                vnode_masks[vnode_number] = vnode_mask
+
             mol = build_molecule_np(charges = x.atom_types.numpy(),
-                        positions = x.coords.numpy().astype(np.float64), basis = self.basis_info.basis_dict)
-            of_data = OFData.minimal_sample_from_mol(mol, self.basis_info)
+                        positions = x.coords.numpy().astype(np.float64), basis=self.basis_info.basis_dict)
+            
+            # reset vnode atomic numbers:
+            for vnode_number, vnode_mask in vnode_masks.items():
+                x.atom_types[vnode_mask] = vnode_number
+
+            of_data = OFData.construct_new(
+                basis_info=self.basis_info,
+                pos=mol.atom_coords(),
+                atomic_numbers=x.atom_types,
+                coeffs=np.zeros(mol.nao),
+                add_irreps=self.basis_info is not None,
+                dual_basis_integrals=get_normalization_vector(mol),
+            )
 
             if self.add_overlap_module is not None:
                 # still requires attrs to be numpy arrays:
