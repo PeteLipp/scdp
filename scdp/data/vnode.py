@@ -16,12 +16,8 @@ CrystalNN = local_env.CrystalNN(
 )
 
 def get_virtual_nodes(
-        atom_coords, cell, pbc, 
+        atom_coords, pbc, 
         method='both',
-        factor=5, 
-        min_radius=1.5, 
-        resolution=0.6,
-        in_dist=0.6,
         atom_types=None, 
         struct=None,
     ):
@@ -29,19 +25,14 @@ def get_virtual_nodes(
     Get virtual nodes for the given atom coordinates and cell.
     Args:
         atom_coords : (np.ndarray, N x 3) The atomic coordinates.
-        cell        : (np.ndarray, 3 x 3) The cell matrix.
         pbc         : (bool) Whether to use PBC.
         method      : (str) The method to use for virtual node generation.
-        factor      : (int) The maximum number (as a factor of number of atoms) of iterations for virtual node generation.
-        min_radius  : (float) The minimum radius for a virtual node.
-        in_dist     : (float) The distance cutoff for the distance_mask.
         atom_types  : (np.ndarray, N) The atomic numbers. only used for non-pbc <method='bond'>.
         struct      : (pymatgen.Structure) The crystal structure. only used for pbc <method='bond'>.
     Return:
         (np.ndarray) Cartisan coordinates of the virtual nodes.        
     """
     assert method in ['voronoi', 'bond', 'both']
-    max_iter = factor * atom_coords.shape[0]
 
     if isinstance(atom_coords, torch.Tensor):
         atom_coords = atom_coords.cpu().numpy()

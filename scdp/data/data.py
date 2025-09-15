@@ -73,10 +73,8 @@ class AtomicData(Data):
         n_atom = len(atom_coords)
         if vnode_method in ["voronoi", "bond", "both"]:
             virtual_nodes = get_virtual_nodes(
-                atom_coords, cell, not disable_pbc, 
+                atom_coords, not disable_pbc, 
                 vnode_method, 
-                vnode_factor,
-                resolution=vnode_res,
                 atom_types=atom_types, 
                 struct=struct
             )
