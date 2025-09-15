@@ -7,6 +7,7 @@ from typing import Optional, List
 from torch.utils.data import DataLoader
 
 from scdp.common.pyg import Collater
+from scdp.common.constants import bohr2ang
 from mldft.utils.molecules import build_molecule_np
 from mldft.ml.data.components.of_data import OFData, Representation
 from mldft.ml.data.components.of_batch import OFBatch
@@ -18,7 +19,7 @@ from mldft.ofdft.basis_integrals import get_normalization_vector
 
 
 class ProbeCollater(Collater):
-    def __init__(self, follow_batch, exclude_keys, n_probe: int = None, basis_info: BasisInfo = None, 
+    def __init__(self, follow_batch, exclude_keys, n_probe: int = None, basis_info: BasisInfo = None, convert_ang2bohr: bool = True,
                  add_lframes: bool = False, add_overlap: bool = False, edge_radial_cutoff: float = None, vnode_dict: dict = None,
                  remove_vnodes: bool = False, lframes_sad_statistics: DatasetStatistics = None, gs_coeffs_fit_path: Optional[str] = None):
         super().__init__(follow_batch, exclude_keys)
@@ -50,6 +51,7 @@ class ProbeCollater(Collater):
             self.lframes_sad_module = None
 
         self.gs_coeffs_fit_path = gs_coeffs_fit_path
+        self.convert_ang2bohr = convert_ang2bohr
 
     def remove_vnodes_from_sample(self, x):
         """Remove vnodes from the sample."""
@@ -71,6 +73,12 @@ class ProbeCollater(Collater):
                 vnode_mask = (x.atom_types == vnode_number)
                 x.atom_types[vnode_mask] = atomic_number
                 vnode_masks[vnode_number] = vnode_mask
+
+            if self.convert_ang2bohr:
+                x.coords = x.coords / bohr2ang
+                x.cell = x.cell / bohr2ang
+                x.probe_coords = x.probe_coords / bohr2ang
+                x.chg_labels = x.chg_labels * (bohr2ang ** 3)  # density scales as 1/volume      
 
             mol = build_molecule_np(charges = x.atom_types.numpy(),
                         positions = x.coords.numpy().astype(np.float64), basis=self.basis_info.basis_dict)
@@ -121,7 +129,7 @@ class ProbeCollater(Collater):
 
             if self.gs_coeffs_fit_path is not None:
                 zarr_path = os.path.join(self.gs_coeffs_fit_path, f"{of_data.id}.zarr")
-                store = zarr.ZipStore(zarr_path, mode="r")  # open in read-only
+                store = zarr.storage.ZipStore(zarr_path, mode="r")  # open in read-only
                 root = zarr.open(store, mode="r")
 
                 gs_coeffs = root["of_labels"]["spatial"]["coeffs"][-1]

@@ -16,6 +16,7 @@ from mldft.utils.molecules import build_molecule_np
 from mldft.ml.data.components.of_data import OFData, Representation
 from mldft.ml.data.components.convert_transforms import ToTorch
 from scdp.data.vnode import get_virtual_nodes
+from scdp.common.constants import bohr2ang
 
 
 ATOM_TYPES = {
@@ -28,11 +29,9 @@ ATOM_TYPES = {
 }
 TYPE_TO_Z = {0: 6, 1: 1, 2: 8}
 
-BOHR_TO_ANGSTROM = 0.529177
-
 
 class SmallDensityDataset(Dataset):
-    def __init__(self, root, mol_name, split, basis_info, use_vnodes=False, convert_to_angstrom=True, n_probe=None, transforms=None):
+    def __init__(self, root, mol_name, split, basis_info, use_vnodes=False, n_probe=None, transforms=None):
         """
         Density dataset for small molecules in the MD datasets.
         Note that the validation and test splits are the same.
@@ -57,13 +56,6 @@ class SmallDensityDataset(Dataset):
         self.atom_coords = np.load(os.path.join(self.data_path, 'structures.npy'))
         self.densities = self._convert_fft(np.load(os.path.join(self.data_path, 'dft_densities.npy')))
         self.grid_coord = self._generate_grid()
-
-        self.convert_to_angstrom = convert_to_angstrom
-        if self.convert_to_angstrom:
-            self.grid_coord = self.grid_coord * BOHR_TO_ANGSTROM
-            self.grid_size = self.grid_size * BOHR_TO_ANGSTROM
-            self.atom_coords = self.atom_coords * BOHR_TO_ANGSTROM
-            self.densities = self.densities / (BOHR_TO_ANGSTROM ** 3)
 
         self.basis_info = basis_info
         self.use_vnodes = use_vnodes
@@ -94,34 +86,6 @@ class SmallDensityDataset(Dataset):
         x = torch.linspace(self.grid_size / self.n_grid, self.grid_size, self.n_grid)
         return torch.stack(torch.meshgrid(x, x, x, indexing='ij'), dim=-1).view(-1, 3).detach()
     
-    # def handle_vnodes(self, of_data: OFData) -> OFData:
-    #     if self.use_vnodes:
-    #         virtual_nodes = get_virtual_nodes(
-    #             atom_coords=of_data.pos, 
-    #             cell=of_data.cell, 
-    #             pbc=False, 
-    #             method='bond',
-    #             factor=3,
-    #             min_radius=1.5,
-    #             resolution=0.8,
-    #             in_dist=0.6,
-    #             atom_types=of_data.atomic_numbers,
-    #             struct=None,  # only used for pbc
-    #         )
-    #         virtual_nodes = torch.from_numpy(virtual_nodes).float()
-            
-    #         molwise_n_vnode = len(virtual_nodes)
-    #         is_vnode = torch.cat([torch.zeros(len(of_data.atomic_numbers), dtype=torch.bool), 
-    #                             torch.ones(len(virtual_nodes), dtype=torch.bool)])
-    #         of_data.pos = torch.cat([of_data.pos, virtual_nodes], dim=0)
-    #         of_data.atomic_numbers = torch.cat([of_data.atomic_numbers, torch.zeros(len(virtual_nodes), dtype=torch.long)], dim=0)
-    #     else:
-    #         molwise_n_vnode = 0
-    #         is_vnode = torch.zeros(len(of_data.atomic_numbers), dtype=torch.bool)
-
-    #     of_data.add_item("molwise_n_vnode", molwise_n_vnode, Representation.NONE)
-    #     of_data.add_item("is_vnode", is_vnode, Representation.SCALAR)
-    #     return of_data
 
     def subsample_grid(self, of_data, n_probe):
         assert isinstance(n_probe, int), "n_probe must be an integer"
@@ -136,21 +100,25 @@ class SmallDensityDataset(Dataset):
     def __getitem__(self, item):
 
         if self.use_vnodes:
+            # convert to coords to angstrom for vnode generation:
+            atom_coords = self.atom_coords[item].clone()
+            atom_coords = atom_coords * bohr2ang
+
             virtual_nodes = get_virtual_nodes(
-                atom_coords=self.atom_coords[item], 
-                cell=torch.eye(3) * self.grid_size, 
+                atom_coords=atom_coords, 
                 pbc=False, 
                 method='bond',
-                factor=3,
-                min_radius=1.5,
-                resolution=0.8,
-                in_dist=0.6,
                 atom_types=self.atom_charges,
                 struct=None,  # only used for pbc
             )
+
+            # convert back to bohr:
+            atom_coords = atom_coords / bohr2ang
+            virtual_nodes = virtual_nodes / bohr2ang
+
             # use oxygen (8) as the atomic number for vnodes:
             charges = torch.cat([self.atom_charges, 8 * torch.ones(len(virtual_nodes), dtype=torch.long)], dim=0)
-            coords = np.concatenate([self.atom_coords[item], virtual_nodes], axis=0)
+            coords = np.concatenate([atom_coords, virtual_nodes], axis=0)
             is_vnode = torch.cat([torch.zeros(len(self.atom_charges), dtype=torch.bool), 
                                 torch.ones(len(virtual_nodes), dtype=torch.bool)])
         else:
